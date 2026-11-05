@@ -187,6 +187,15 @@ model_list:
         session_affinity_ttl_seconds: 3600
         # Image turns only go to a model declaring vision support (swift now does).
         modality_routing: true
+    model_info:
+      # The auto_router deployment itself carries no context info, so any
+      # client asking LiteLLM directly (e.g. VS Code Copilot's LiteLLM
+      # plugin -- OpenCode's own opencode.jsonc limit only OpenCode reads)
+      # got a generic ~128k default. This is the floor across every model
+      # in the tiers above (see the context-floor comment at the top of
+      # this file).
+      max_input_tokens: 200000
+      max_output_tokens: 32768
 
   - model_name: smart-router-500k
     litellm_params:
@@ -233,6 +242,11 @@ model_list:
         session_affinity: false
         session_affinity_ttl_seconds: 3600
         modality_routing: true
+    model_info:
+      # Same reasoning as smart-router's model_info above; floor here is
+      # 500k since every model in this router's tiers clears that bar.
+      max_input_tokens: 500000
+      max_output_tokens: 64000
 
 litellm_settings:
   drop_params: true
