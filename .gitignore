@@ -9,3 +9,5 @@ litellm/.env
 litellm/secrets/
 litellm/data/
 litellm/routes/
+litellm/cliproxy/config.yaml
+litellm/cliproxy/auth/

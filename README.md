@@ -2,7 +2,8 @@
 
 An [OpenCode](https://opencode.ai) TUI plugin that shows **which backend model
 LiteLLM's `smart-router` picked** for the turn you are running — as a toast in the
-terminal UI, not as text inside the model's answer.
+terminal UI at the start and end of the response. The gateway also marks the
+answer itself with `> ⚡ routed via <model>` at the top and bottom.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -19,8 +20,10 @@ terminal UI, not as text inside the model's answer.
 | End of the turn | The same toast fires again, so a long turn shows the route at both ends. |
 | On demand | Palette command **"Show litellm route"** (group `smart-router`) re-shows the current session's route. |
 
-The answer text itself stays clean — the route is never injected into the model's
-output.
+The route is shown twice: as a `> ⚡ routed via <model>` marker at the **top and
+bottom** of the answer (both are kept), and as a toast at the start and end of the
+turn. A stale file from the previous turn is never announced at the start (dedupe
+by the route file's `updated_at`).
 
 ## Requirements
 
@@ -132,6 +135,26 @@ current session id; if it does, the toast will appear.
 > (that is where the running container mounts its files from). The `litellm/`
 > folder in this repo is the source of truth for those files — copy or symlink
 > them when you change them here.
+
+### Claude Pro models
+
+Anthropic blocks the Claude Pro subscription's OAuth token for non-Claude-Code
+clients, so the gateway reaches Claude through **CLIProxyAPI** (a `cliproxyapi`
+service in the compose stack) instead of calling Anthropic directly:
+
+```
+OpenCode -> LiteLLM -> cliproxyapi:8317 -> Claude Code transport -> Anthropic
+```
+
+| Model | Tier |
+|-------|------|
+| `claude-haiku-5-5` | MEDIUM + fallback |
+| `claude-sonnet-5` | COMPLEX |
+| `claude-opus-5-5` | REASONING |
+| `claude-fable-5-1` | not in tiers (needs usage credits) |
+
+See [`litellm/README.md`](litellm/README.md#claude-pro-subscription-20) for the
+one-time Claude login, the `cliproxy/` config, and the quota/terms caveats.
 
 ## Usage
 

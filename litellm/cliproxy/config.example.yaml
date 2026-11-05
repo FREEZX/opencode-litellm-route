@@ -1,0 +1,14 @@
+# CLIProxyAPI — OpenAI-compatible bridge to the Claude Code subscription.
+# Copy to config.yaml and set a client key. The auth/ directory holds the OAuth
+# login written by `-claude-login`; both are git-ignored.
+config-version: 8
+server:
+  host: "0.0.0.0"
+  port: 8317
+  disable-control-panel: true
+  disable-auto-update-panel: true
+access:
+  api-keys:
+    - "sk-local-change-me"
+oauth:
+  auth-dir: "/root/.cli-proxy-api"

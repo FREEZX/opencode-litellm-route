@@ -27,6 +27,7 @@ services:
       STRATA_API_BASE: ${STRATA_API_BASE:-http://192.168.1.134:8080/v1}
       STRATA_API_KEY: ${STRATA_API_KEY}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
     volumes:
@@ -69,3 +70,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Claude Code OAuth bridge. Anthropic rejects subscription OAuth from
+  # non-Claude-Code clients (429), so Claude models go through this proxy, which
+  # speaks the Claude Code transport. LiteLLM calls it as an OpenAI-compatible
+  # upstream (api_base http://cliproxyapi:8317/v1).
+  cliproxyapi:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cliproxyapi
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Europe/Skopje}
+    volumes:
+      - ./cliproxy/config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./cliproxy/auth:/root/.cli-proxy-api
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - timeout 2 bash -c '</dev/tcp/127.0.0.1/8317' || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+

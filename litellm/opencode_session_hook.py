@@ -7,13 +7,13 @@ Two jobs:
 
 2. Show which model ``smart-router`` picked. The proxy exposes it only as the
    ``x-litellm-model-name`` response header, which OpenCode does not render, so
-   the first assistant text of each new human turn ends with a one-line marker:
+   the first assistant text of each new human turn starts with a one-line marker:
 
        > ⚡ routed via longcat-2.0
 
-   Agent-loop continuations (tool results) do not get a second marker, and the
-   marker is stripped from assistant history on the way back in, so the model
-   never sees it and token counts stay clean.
+   ...followed by the model's answer. Agent-loop continuations (tool results) do
+   not get a second marker, and the marker is stripped from assistant history on
+   the way back in, so the model never sees it and token counts stay clean.
 """
 
 from __future__ import annotations
@@ -233,7 +233,8 @@ def _strip_route_markers(messages: Any) -> None:
 class OpenCodeSessionHook(CustomLogger):
     def __init__(self) -> None:
         super().__init__()
-        # session_id -> whether this turn's final step was already decorated.
+        # session_id -> whether this turn's first chunk / final step was decorated.
+        self._turn_started: dict[str, bool] = {}
         self._turn_marked: dict[str, bool] = {}
 
     def _session_key(self, data: Any) -> str:
@@ -268,10 +269,31 @@ class OpenCodeSessionHook(CustomLogger):
             return False, key
         return True, key
 
+    def _decorate_start_allowed(self, data: Any) -> tuple[bool, str]:
+        """(allowed, session_key) — first chunk of a new human turn.
+
+        The marker is prepended, so it is decided before any content is emitted;
+        tool-loop continuation requests (newest message is a tool result) and
+        title/summary calls are skipped.
+        """
+        if not SHOW_ROUTE_MARKER or not _is_smart_router(data) or not _newest_is_human_ask(data):
+            return False, ""
+        if self._is_title_call(data):
+            return False, ""
+        key = self._session_key(data)
+        if self._turn_started.get(key):
+            return False, key
+        return True, key
+
     def _mark_done(self, key: str) -> None:
         if len(self._turn_marked) > 512:
             self._turn_marked.clear()
         self._turn_marked[key] = True
+
+    def _mark_started(self, key: str) -> None:
+        if len(self._turn_started) > 512:
+            self._turn_started.clear()
+        self._turn_started[key] = True
 
     def _route_allowed(self, data: Any) -> bool:
         """A route file is written for the first step of each smart-router turn."""
@@ -318,9 +340,10 @@ class OpenCodeSessionHook(CustomLogger):
         # Keep our own route marker out of the model's context.
         _strip_route_markers(data.get("messages"))
 
-        # A new human ask starts a fresh turn: allow one marker again.
+        # A new human ask starts a fresh turn: allow one start and one end marker again.
         if _newest_is_human_ask(data):
             self._turn_marked.pop(session_id, None)
+            self._turn_started.pop(session_id, None)
 
         return data
 
@@ -331,44 +354,64 @@ class OpenCodeSessionHook(CustomLogger):
             finish = None
         final = finish not in ("tool_calls", "function_call")
         self._record_route(data, getattr(response, "model", None))
-        allowed, key = self._decorate_allowed(data, final)
-        if not allowed:
+        start_allowed, start_key = self._decorate_start_allowed(data)
+        end_allowed, end_key = self._decorate_allowed(data, final)
+        if not start_allowed and not end_allowed:
             return response
         try:
             content = response.choices[0].message.content
             if isinstance(content, str) and content:
-                response.choices[0].message.content = f"{content}\n\n{_marker_for(response.model)}"
-                self._mark_done(key)
+                marker = _marker_for(response.model)
+                if start_allowed and end_allowed:
+                    # "keep both": announce at the top and confirm at the bottom.
+                    response.choices[0].message.content = f"{marker}\n\n{content}\n\n{marker}"
+                elif start_allowed:
+                    response.choices[0].message.content = f"{marker}\n\n{content}"
+                else:
+                    response.choices[0].message.content = f"{content}\n\n{marker}"
+                if start_allowed:
+                    self._mark_started(start_key)
+                if end_allowed:
+                    self._mark_done(end_key)
         except Exception as exc:  # noqa: BLE001 — decoration must never fail a request
             log.debug("route marker skipped: %s", exc)
         return response
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
-        marked = False
+        start_done = False
+        end_done = False
         routed = False
         last_chunk = None
+        start_allowed, start_key = self._decorate_start_allowed(request_data)
         async for chunk in response:
             last_chunk = chunk
             if not routed:
                 routed = True
                 self._record_route(request_data, getattr(chunk, "model", None))
-            if not marked and _is_finish_chunk(chunk):
+            if start_allowed and not start_done:
+                # "keep both" — announce the route before the first content chunk.
+                marker_chunk = _marker_chunk_from(chunk, prefix=True)
+                if marker_chunk is not None:
+                    yield marker_chunk
+                    start_done = True
+                    self._mark_started(start_key)
+            if not end_done and _is_finish_chunk(chunk):
                 finish = _finish_reason(chunk)
                 allowed, key = self._decorate_allowed(
                     request_data, finish not in ("tool_calls", "function_call")
                 )
                 if allowed:
-                    marker_chunk = _marker_chunk_from(chunk)
+                    marker_chunk = _marker_chunk_from(chunk, prefix=False)
                     if marker_chunk is not None:
                         yield marker_chunk
-                        marked = True
+                        end_done = True
                         self._mark_done(key)
             yield chunk
-        if not marked and last_chunk is not None:
+        if not end_done and last_chunk is not None:
             allowed, key = self._decorate_allowed(request_data, True)
             if allowed:
                 # Providers that never send finish_reason: append a final text chunk.
-                marker_chunk = _marker_chunk_from(last_chunk)
+                marker_chunk = _marker_chunk_from(last_chunk, prefix=False)
                 if marker_chunk is not None:
                     yield marker_chunk
                     self._mark_done(key)
@@ -389,7 +432,7 @@ def _is_finish_chunk(chunk: Any) -> bool:
     return _finish_reason(chunk) is not None
 
 
-def _marker_chunk_from(chunk: Any) -> Any | None:
+def _marker_chunk_from(chunk: Any, prefix: bool = True) -> Any | None:
     """A copy of ``chunk`` carrying only the route marker as a text delta."""
     try:
         marker = chunk.model_copy(deep=True) if hasattr(chunk, "model_copy") else copy.deepcopy(chunk)
@@ -405,7 +448,8 @@ def _marker_chunk_from(chunk: Any) -> Any | None:
         delta = getattr(choice, "delta", None)
         if delta is None:
             return None
-        delta.content = f"\n\n{_marker_for(getattr(chunk, 'model', None))}"
+        text = _marker_for(getattr(chunk, "model", None))
+        delta.content = f"{text}\n\n" if prefix else f"\n\n{text}"
         if hasattr(delta, "reasoning_content"):
             delta.reasoning_content = None
         if hasattr(delta, "tool_calls"):
