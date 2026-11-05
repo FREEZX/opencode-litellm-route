@@ -1,10 +1,13 @@
-# LiteLLM proxy — Windows Strata (local) + OpenCode Go + allowance-aware router
+# LiteLLM proxy — Windows Strata (local) + OpenCode Go + allowance-aware routers
 #
 # Local:     swift-1.5-iq3_xxs   free, ~40 tok/s, cheapest place to run a job it can do
 # OpenCode:  every Go model via opencode_go/  (direct model names still work)
-# Auto:      smart-router
-#              classifier = local swift-1.5, heuristic if that fails
-#              tier is capped from GET /zen/go/v1/usage (real 5h / weekly / monthly %)
+# Auto:      smart-router (<=200k context pools) + smart-router-500k (<=500k+ pools)
+#              classifier = claude-haiku-5-5 (Claude Pro, via CLIProxyAPI),
+#              heuristic if that fails. Tier is capped from GET /zen/go/v1/usage
+#              (real 5h / weekly / monthly %). Both routers share one classifier
+#              instance (go_router.go_allowance_classifier), so a cooldown/outage
+#              on one applies to the other too.
 # Claude:    Claude Pro $20 subscription through CLIProxyAPI (claude-* models);
 #              direct Anthropic OAuth is 429-gated for non-Claude-Code clients.
 #
@@ -15,6 +18,12 @@
 # DeepSeek and Muse Spark are listed for direct calls but kept out of smart-router
 # pools: this workspace rejects them (Global regions / training opt-in). Add them
 # back to a tier after enabling those in Console → Settings → Privacy.
+#
+# Context floors for the two routers (from each deployment's max_input_tokens):
+#   hy3 = 192000 (<200k, in neither router's pools)
+#   claude-haiku/sonnet/opus-5-5 = 200000 (in smart-router only, not the 500k one)
+#   kimi-k2.7-code, swift-1.5-iq3_xxs = 262144 (>=200k, <500k: smart-router only)
+#   everything else used below is >=500000
 
 model_list:
   # ---- Windows Strata (LAN, free) ----
@@ -110,10 +119,18 @@ model_list:
     litellm_params: { model: openai/claude-fable-5-1, api_base: os.environ/CLIPROXY_API_BASE, api_key: os.environ/CLIPROXY_API_KEY, drop_params: true }
     model_info: { mode: chat, max_input_tokens: 200000, max_output_tokens: 64000, supports_function_calling: true, supports_vision: true, supports_reasoning: true }
 
-  # ---- Complexity auto-router (lean: minimize Go allowance spend) ----
+  # ---- Complexity auto-routers (lean: minimize Go allowance spend) ----
   # SIMPLE = the zero-cost pool: local swift + the unlimited free Go models.
   # MEDIUM = cheapest rates/buckets. COMPLEX = mid-strong. REASONING = top few.
   # go_router.py caps tiers from live Go usage (rolling/weekly bind first).
+  #
+  # Two routers, split by how much context every pooled model actually supports
+  # (see the context-floor comment at the top of this file):
+  #   smart-router      — every model is >=200k context (includes Claude Pro)
+  #   smart-router-500k — every model is >=500k context (drops hy3, Claude Pro,
+  #                        kimi-k2.7-code and swift, which top out at 262144)
+  # Both share one classifier instance, so pick the router by the context you
+  # need; the tier logic (usage caps, heuristic fallback) is identical.
   - model_name: smart-router
     litellm_params:
       model: auto_router/complexity_router
@@ -133,13 +150,12 @@ model_list:
           MEDIUM:
             - claude-haiku-5-5          # Claude Pro subscription (cheap, fast)
             - mimo-v2.6-flash
-            - hy3
             - longcat-2.0
             - glm-5.3-flash
             - qwen3.8-flash
             - minimax-m3.1-flash
+            # - hy3                        # 192000 context, below the 200k floor
             # - deepseek-v4.1-flash        # needs Global regions enabled in Console
-            # - claude-haiku-5-5           # needs Global regions enabled in Console
             # - muse-spark-1.2-contributor # needs training-on-data enabled
             # - muse-spark-1.3-contributor # needs training-on-data enabled
           COMPLEX:
@@ -172,21 +188,70 @@ model_list:
         # Image turns only go to a model declaring vision support (swift now does).
         modality_routing: true
 
+  - model_name: smart-router-500k
+    litellm_params:
+      model: auto_router/complexity_router
+      drop_params: true
+      complexity_router_default_model: beam-free
+      complexity_router_config:
+        classifier_type: custom
+        classifier_plugin: go_router.go_allowance_classifier
+        classifier_plugin_timeout_ms: 15000
+        classifier_fallback: heuristic
+        tiers:
+          SIMPLE:
+            - beam-free
+            # swift-1.5-iq3_xxs removed: 262144 context, below the 500k floor.
+            # No zero-cost model here clears 500k, so SIMPLE still costs a Go pick.
+          MEDIUM:
+            - mimo-v2.6-flash
+            - longcat-2.0
+            - glm-5.3-flash
+            - qwen3.8-flash
+            - minimax-m3.1-flash
+            # - claude-haiku-5-5           # 200000 context, below the 500k floor
+          COMPLEX:
+            - glm-5.3
+            - glm-5.2
+            - qwen3.7-plus
+            - kimi-k3
+            - minimax-m3
+            - mimo-v2.6-pro
+            - gpt-5.6-luna
+            - grok-4.7
+            - gemini-4-argon
+            # - claude-sonnet-5            # 200000 context, below the 500k floor
+            # - kimi-k2.7-code             # 262144 context, below the 500k floor
+          REASONING:
+            - gpt-6-luna
+            - hy4-preview
+            - qwen3.8-max
+            - step-5-preview
+            - kimi-k3.1-pro
+            # - claude-opus-5-5            # 200000 context, below the 500k floor
+        classification_mode: user_turn
+        session_affinity: false
+        session_affinity_ttl_seconds: 3600
+        modality_routing: true
+
 litellm_settings:
   drop_params: true
   request_timeout: 600
   modify_params: true
   callbacks:
     - opencode_session_hook.proxy_handler_instance
+    - go_router.provider_balance_filter
 
 router_settings:
   # The local swift box and some Go models are intermittently down/blocked. When a
   # routed model fails, retry on this ordered chain and stop at the first success
   # (all four were verified reachable). Without this, one dead pick ends in a 500.
   # The chain applies to smart-router and, via fallback_lookup_groups, to the
-  # tier model a pre-routing pick selected.
+  # tier model a pre-routing pick selected. smart-router-500k gets its own chain
+  # so a fallback never drops below its 500k context floor.
   fallbacks:
     - smart-router: ["beam-free", "claude-haiku-5-5", "glm-5.3-flash", "qwen3.8-flash", "kimi-k2.7-code"]
+    - smart-router-500k: ["beam-free", "glm-5.3-flash", "qwen3.8-flash", "minimax-m3.1-flash"]
   # Fail over on the first failure instead of retrying the same dead deployment:
   # num_retries=0 means one attempt per model group, then the next fallback.
   num_retries: 0

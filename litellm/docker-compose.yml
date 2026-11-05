@@ -30,12 +30,19 @@ services:
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      CLIPROXY_API_BASE: ${CLIPROXY_API_BASE}
+      CLIPROXY_API_KEY: ${CLIPROXY_API_KEY}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./opencode_session_hook.py:/app/opencode_session_hook.py:ro
       - ./go_router.py:/app/go_router.py:ro
       # Route handoff to the OpenCode TUI plugin: one small JSON per session.
       - ./routes:/app/routes
+      # Claude Pro OAuth credential (CLIProxyAPI maintains/refreshes it);
+      # go_router.py reads the access_token directly to poll Claude's own
+      # quota endpoint for the provider-balance filter. Read-only: this
+      # container must never write/rotate the credential cliproxyapi owns.
+      - ./cliproxy/auth:/app/cliproxy-auth:ro
     command:
       - "--config=/app/config.yaml"
       - "--port=4000"

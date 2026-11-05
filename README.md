@@ -60,10 +60,10 @@ litellm-route/
 ├── tui.ts         # OpenCode plugin: TUI part (polling, toasts, palette command)
 ├── README.md      # this file
 └── litellm/       # the LiteLLM half of the setup
-    ├── config.yaml              # models, smart-router tiers, fallbacks
+    ├── config.yaml              # models, smart-router + smart-router-500k tiers, fallbacks
     ├── opencode_session_hook.py # callback: session pinning + route files
-    ├── go_router.py             # custom classifier (heuristic + swift + allowance caps)
-    ├── docker-compose.yml       # proxy + postgres
+    ├── go_router.py             # classifier (claude-haiku-5-5 + heuristic + allowance caps) + provider-balance filter
+    ├── docker-compose.yml       # proxy + postgres + cliproxyapi
     ├── .env.example             # template for .env
     └── README.md                # LiteLLM setup guide (from scratch)
 ```
@@ -148,13 +148,31 @@ OpenCode -> LiteLLM -> cliproxyapi:8317 -> Claude Code transport -> Anthropic
 
 | Model | Tier |
 |-------|------|
-| `claude-haiku-5-5` | MEDIUM + fallback |
+| `claude-haiku-5-5` | MEDIUM + fallback; also the classifier for both routers |
 | `claude-sonnet-5` | COMPLEX |
 | `claude-opus-5-5` | REASONING |
 | `claude-fable-5-1` | not in tiers (needs usage credits) |
 
 See [`litellm/README.md`](litellm/README.md#claude-pro-subscription-20) for the
 one-time Claude login, the `cliproxy/` config, and the quota/terms caveats.
+
+### Two routers, split by context floor
+
+`smart-router` (every pooled model ≥200k context) and `smart-router-500k`
+(every pooled model ≥500k context — drops Claude Pro, `hy3`, `kimi-k2.7-code`,
+swift) share one classifier instance, so a classifier outage/cooldown on one
+applies to the other. Pick the router by how much context the session needs.
+
+### Provider balancing
+
+A second gateway callback, `go_router.ProviderBalanceFilter`, polls OpenCode
+Go's and Claude Pro's real quota windows and excludes a provider's
+deployments once its hourly/weekly/monthly limit is actually exceeded — on
+every request, not just router picks. `router_settings.fallbacks` then
+carries the request onto the other provider, or onto local swift-1.5 if both
+are exhausted at once. See
+[`litellm/README.md`](litellm/README.md#provider-balancing-go--claude-pro--swift)
+for the exact windows and hard caps.
 
 ## Usage
 
