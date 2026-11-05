@@ -1,0 +1,174 @@
+# LiteLLM proxy — Windows Strata (local) + OpenCode Go + allowance-aware router
+#
+# Local:     swift-1.5-iq3_xxs   free, ~40 tok/s, cheapest place to run a job it can do
+# OpenCode:  every Go model via opencode_go/  (direct model names still work)
+# Auto:      smart-router
+#              classifier = local swift-1.5, heuristic if that fails
+#              tier is capped from GET /zen/go/v1/usage (real 5h / weekly / monthly %)
+#
+# Restart the litellm container after editing this file. With STORE_MODEL_IN_DB the
+# proxy reconciles deployment ids from the file and will drop a model whose params
+# changed until the process reloads.
+#
+# DeepSeek and Muse Spark are listed for direct calls but kept out of smart-router
+# pools: this workspace rejects them (Global regions / training opt-in). Add them
+# back to a tier after enabling those in Console → Settings → Privacy.
+
+model_list:
+  # ---- Windows Strata (LAN, free) ----
+  - model_name: swift-1.5-iq3_xxs
+    litellm_params:
+      model: openai/swift-1.5-iq3_xxs
+      api_base: os.environ/STRATA_API_BASE
+      api_key: os.environ/STRATA_API_KEY
+      drop_params: true
+    model_info:
+      id: windows-strata-swift-1.5-iq3_xxs
+      mode: chat
+      max_tokens: 32768
+      max_input_tokens: 262144
+      max_output_tokens: 32768
+      supports_function_calling: true
+      supports_vision: true
+      supports_reasoning: true
+
+  # ---- OpenCode Go (subscription). Direct names; pools are on smart-router. ----
+  - model_name: beam-free
+    litellm_params: { model: opencode_go/beam-free, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: iceman-contributor-free
+    litellm_params: { model: opencode_go/iceman-contributor-free, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: claude-haiku-5-5
+    litellm_params: { model: opencode_go/claude-haiku-5-5, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: glm-5.3-flash
+    litellm_params: { model: opencode_go/glm-5.3-flash, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: deepseek-v4.1-flash
+    litellm_params: { model: opencode_go/deepseek-v4.1-flash, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: qwen3.8-flash
+    litellm_params: { model: opencode_go/qwen3.8-flash, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: minimax-m3.1-flash
+    litellm_params: { model: opencode_go/minimax-m3.1-flash, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: mimo-v2.6-flash
+    litellm_params: { model: opencode_go/mimo-v2.6-flash, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: hy3
+    litellm_params: { model: opencode_go/hy3, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: longcat-2.0
+    litellm_params: { model: opencode_go/longcat-2.0, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: muse-spark-1.2-contributor
+    litellm_params: { model: opencode_go/muse-spark-1.2-contributor, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: muse-spark-1.3-contributor
+    litellm_params: { model: opencode_go/muse-spark-1.3-contributor, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: glm-5.3
+    litellm_params: { model: opencode_go/glm-5.3, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: glm-5.2
+    litellm_params: { model: opencode_go/glm-5.2, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: deepseek-v4-pro
+    litellm_params: { model: opencode_go/deepseek-v4-pro, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: qwen3.7-plus
+    litellm_params: { model: opencode_go/qwen3.7-plus, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: kimi-k2.7-code
+    litellm_params: { model: opencode_go/kimi-k2.7-code, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: kimi-k3
+    litellm_params: { model: opencode_go/kimi-k3, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: minimax-m3
+    litellm_params: { model: opencode_go/minimax-m3, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: mimo-v2.6-pro
+    litellm_params: { model: opencode_go/mimo-v2.6-pro, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: gpt-5.6-luna
+    litellm_params: { model: opencode_go/gpt-5.6-luna, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: grok-4.7
+    litellm_params: { model: opencode_go/grok-4.7, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: gemini-4-argon
+    litellm_params: { model: opencode_go/gemini-4-argon, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: kimi-k3.1-pro
+    litellm_params: { model: opencode_go/kimi-k3.1-pro, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: qwen3.8-max
+    litellm_params: { model: opencode_go/qwen3.8-max, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: gpt-6-luna
+    litellm_params: { model: opencode_go/gpt-6-luna, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: hy4-preview
+    litellm_params: { model: opencode_go/hy4-preview, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+  - model_name: step-5-preview
+    litellm_params: { model: opencode_go/step-5-preview, api_key: os.environ/OPENCODE_API_KEY, drop_params: true }
+
+  # ---- Complexity auto-router (lean: minimize Go allowance spend) ----
+  # SIMPLE = the zero-cost pool: local swift + the unlimited free Go models.
+  # MEDIUM = cheapest rates/buckets. COMPLEX = mid-strong. REASONING = top few.
+  # go_router.py caps tiers from live Go usage (rolling/weekly bind first).
+  - model_name: smart-router
+    litellm_params:
+      model: auto_router/complexity_router
+      drop_params: true
+      complexity_router_default_model: beam-free
+      complexity_router_config:
+        classifier_type: custom
+        classifier_plugin: go_router.go_allowance_classifier
+        classifier_plugin_timeout_ms: 15000
+        classifier_fallback: heuristic
+        tiers:
+          SIMPLE:
+            - swift-1.5-iq3_xxs
+            - beam-free
+            # iceman-contributor-free removed: this workspace rejects it
+            # (training-on-data opt-in), so it would 400 on every pick.
+          MEDIUM:
+            - mimo-v2.6-flash
+            - hy3
+            - longcat-2.0
+            - glm-5.3-flash
+            - qwen3.8-flash
+            - minimax-m3.1-flash
+            # - deepseek-v4.1-flash        # needs Global regions enabled in Console
+            # - claude-haiku-5-5           # needs Global regions enabled in Console
+            # - muse-spark-1.2-contributor # needs training-on-data enabled
+            # - muse-spark-1.3-contributor # needs training-on-data enabled
+          COMPLEX:
+            - glm-5.3
+            - glm-5.2
+            - qwen3.7-plus
+            - kimi-k2.7-code
+            - kimi-k3
+            - minimax-m3
+            - mimo-v2.6-pro
+            - gpt-5.6-luna
+            - grok-4.7
+            - gemini-4-argon
+            # - deepseek-v4-pro            # needs Global regions enabled in Console
+          REASONING:
+            - gpt-6-luna
+            - hy4-preview
+            - qwen3.8-max
+            - step-5-preview
+            - kimi-k3.1-pro
+        # Re-classify each new human ask so the allowance caps above are re-checked
+        # mid-session; continuation turns replay the held pin, keeping prompt caches
+        # warm and avoiding mid-loop model switches.
+        classification_mode: user_turn
+        session_affinity: false
+        session_affinity_ttl_seconds: 3600
+        # Image turns only go to a model declaring vision support (swift now does).
+        modality_routing: true
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+  modify_params: true
+  callbacks:
+    - opencode_session_hook.proxy_handler_instance
+
+router_settings:
+  # The local swift box and some Go models are intermittently down/blocked. When a
+  # routed model fails, retry on this ordered chain and stop at the first success
+  # (all four were verified reachable). Without this, one dead pick ends in a 500.
+  # The chain applies to smart-router and, via fallback_lookup_groups, to the
+  # tier model a pre-routing pick selected.
+  fallbacks:
+    - smart-router: ["beam-free", "glm-5.3-flash", "qwen3.8-flash", "kimi-k2.7-code"]
+  # Fail over on the first failure instead of retrying the same dead deployment:
+  # num_retries=0 means one attempt per model group, then the next fallback.
+  num_retries: 0
+  allowed_fails: 1
+  cooldown_time: 60
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  disable_env_credential_login: true
